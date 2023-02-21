@@ -71,6 +71,12 @@ Files extracted from upstream source:
 - all .cpp, .h, and .txt files except the folders MakeTables and etc2packer.
 
 
+## detours
+
+- Upstream: https://github.com/microsoft/Detours
+- Version: git (734ac64899c44933151c1335f6ef54a590219221, 2022)
+- License: MIT
+
 ## doctest
 
 - Upstream: https://github.com/onqtam/doctest

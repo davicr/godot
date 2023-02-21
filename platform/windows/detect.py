@@ -189,6 +189,8 @@ def get_opts():
         BoolVariable("use_static_cpp", "Link MinGW/MSVC C++ runtime libraries statically", True),
         BoolVariable("use_asan", "Use address sanitizer (ASAN)", False),
         BoolVariable("debug_crt", "Compile with MSVC's debug CRT (/MDd)", False),
+        BoolVariable("fix_enumdevices_stall", "Use experimental EnumDevices stall fix", True),
+        BoolVariable("builtin_detours", "Use the built-in Detours library", True),
     ]
 
 
@@ -638,3 +640,6 @@ def configure(env: "Environment"):
 
     else:  # MinGW
         configure_mingw(env)
+
+    if env["fix_enumdevices_stall"]:
+        env.Append(CPPDEFINES=["FIX_ENUMDEVICES_STALL_ENABLED"])

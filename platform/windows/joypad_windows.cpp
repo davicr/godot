@@ -33,6 +33,13 @@
 #include <oleauto.h>
 #include <wbemidl.h>
 
+#ifdef FIX_ENUMDEVICES_STALL_ENABLED
+#include <wchar.h>
+#include <hidsdi.h>
+#include <hidpi.h>
+#include <detours.h>
+#endif
+
 #if defined(__GNUC__)
 // Workaround GCC warning from -Wcast-function-type.
 #define GetProcAddress (void *)GetProcAddress
@@ -49,6 +56,59 @@ DWORD WINAPI _xinput_set_state(DWORD dwUserIndex, XINPUT_VIBRATION *pVibration) 
 JoypadWindows::JoypadWindows() {
 }
 
+#ifdef FIX_ENUMDEVICES_STALL_ENABLED
+typedef BOOLEAN(__stdcall *HidD_GetProductStringFunc)(HANDLE hid_handle, PVOID buffer, ULONG buffer_length);
+HidD_GetProductStringFunc _HidD_GetProductString = nullptr;
+
+typedef BOOLEAN(__stdcall *HidD_GetPreparsedDataFunc)(HANDLE hid_handle, PHIDP_PREPARSED_DATA *preparsed_data);
+HidD_GetPreparsedDataFunc _HidD_GetPreparsedData = nullptr;
+
+typedef NTSTATUS(__stdcall *HidP_GetCapsFunc)(PHIDP_PREPARSED_DATA preparsed_data, PHIDP_CAPS capabilities);
+HidP_GetCapsFunc _HidP_GetCaps = nullptr;
+
+typedef BOOLEAN(__stdcall *HidD_FreePreparsedDataFunc)(PHIDP_PREPARSED_DATA preparsed_data);
+HidD_FreePreparsedDataFunc _HidD_FreePreparsedData = nullptr;
+
+bool hid_is_controller(HANDLE hid_handle) {
+	PHIDP_PREPARSED_DATA hid_preparsed = nullptr;
+	BOOLEAN preparsed_res = _HidD_GetPreparsedData(hid_handle, &hid_preparsed);
+	if (!preparsed_res) {
+		return false;
+	}
+
+	HIDP_CAPS hid_caps = {};
+	NTSTATUS caps_res = _HidP_GetCaps(hid_preparsed, &hid_caps);
+	_HidD_FreePreparsedData(hid_preparsed);
+	if (caps_res != HIDP_STATUS_SUCCESS) {
+		return false;
+	}
+
+	if (hid_caps.UsagePage != HID_USAGE_PAGE_GENERIC) {
+		return false;
+	}
+
+	if (hid_caps.Usage == HID_USAGE_GENERIC_JOYSTICK || hid_caps.Usage == HID_USAGE_GENERIC_GAMEPAD || hid_caps.Usage == HID_USAGE_GENERIC_MULTI_AXIS_CONTROLLER) {
+		return true;
+	}
+
+	return false;
+}
+
+const wchar_t unknown_product_string[] = L"Unknown HID Device";
+BOOLEAN __stdcall getproductstring_fix_hook(HANDLE hid_handle, PVOID buffer, ULONG buffer_length) {
+	if (hid_is_controller(hid_handle)) {
+		return _HidD_GetProductString(hid_handle, buffer, buffer_length);
+	}
+
+	size_t unknown_product_length = std::wcslen(unknown_product_string);
+	if (buffer_length > unknown_product_length) {
+		wmemcpy((wchar_t *)buffer, unknown_product_string, unknown_product_length);
+		return TRUE;
+	}
+	return FALSE;
+}
+#endif
+
 JoypadWindows::JoypadWindows(HWND *hwnd) {
 	input = Input::get_singleton();
 	hWnd = hwnd;
@@ -63,6 +123,24 @@ JoypadWindows::JoypadWindows(HWND *hwnd) {
 	for (int i = 0; i < JOYPADS_MAX; i++) {
 		attached_joypads[i] = false;
 	}
+
+#ifdef FIX_ENUMDEVICES_STALL_ENABLED
+	// Don't enumerate blacklisted devices.
+
+	// Load `hid.dll` before `dinput8.dll`.
+	HANDLE hid_lib = LoadLibrary("hid.dll");
+	_HidD_GetProductString = (HidD_GetProductStringFunc)GetProcAddress((HMODULE)hid_lib, "HidD_GetProductString");
+	_HidD_GetPreparsedData = (HidD_GetPreparsedDataFunc)GetProcAddress((HMODULE)hid_lib, "HidD_GetPreparsedData");
+	_HidD_FreePreparsedData = (HidD_FreePreparsedDataFunc)GetProcAddress((HMODULE)hid_lib, "HidD_FreePreparsedData");
+	_HidP_GetCaps = (HidP_GetCapsFunc)GetProcAddress((HMODULE)hid_lib, "HidP_GetCaps");
+
+
+	// Add hook for HidD_GetProductString
+	DetourTransactionBegin();
+	DetourUpdateThread(GetCurrentThread());
+	DetourAttach(&(PVOID &)_HidD_GetProductString, getproductstring_fix_hook);
+	DetourTransactionCommit();
+#endif
 
 	HRESULT result = DirectInput8Create(GetModuleHandle(nullptr), DIRECTINPUT_VERSION, IID_IDirectInput8, (void **)&dinput, nullptr);
 	if (result == DI_OK) {
