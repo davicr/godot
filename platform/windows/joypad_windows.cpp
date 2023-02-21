@@ -34,7 +34,7 @@
 #include <wbemidl.h>
 
 #ifdef FIX_ENUMDEVICES_STALL_ENABLED
-#include <wchar.h>
+#include <cwchar>
 #include <hidsdi.h>
 #include <hidpi.h>
 #include <detours.h>
@@ -95,14 +95,14 @@ bool hid_is_controller(HANDLE hid_handle) {
 }
 
 const wchar_t unknown_product_string[] = L"Unknown HID Device";
+size_t unknown_product_length = sizeof(unknown_product_string);
 BOOLEAN __stdcall getproductstring_fix_hook(HANDLE hid_handle, PVOID buffer, ULONG buffer_length) {
 	if (hid_is_controller(hid_handle)) {
 		return _HidD_GetProductString(hid_handle, buffer, buffer_length);
 	}
 
-	size_t unknown_product_length = std::wcslen(unknown_product_string);
-	if (buffer_length > unknown_product_length) {
-		wmemcpy((wchar_t *)buffer, unknown_product_string, unknown_product_length);
+	if (buffer_length >= unknown_product_length) {
+		memcpy(buffer, unknown_product_string, unknown_product_length);
 		return TRUE;
 	}
 	return FALSE;
@@ -134,8 +134,7 @@ JoypadWindows::JoypadWindows(HWND *hwnd) {
 	_HidD_FreePreparsedData = (HidD_FreePreparsedDataFunc)GetProcAddress((HMODULE)hid_lib, "HidD_FreePreparsedData");
 	_HidP_GetCaps = (HidP_GetCapsFunc)GetProcAddress((HMODULE)hid_lib, "HidP_GetCaps");
 
-
-	// Add hook for HidD_GetProductString
+	// Add hook for HidD_GetProductString.
 	DetourTransactionBegin();
 	DetourUpdateThread(GetCurrentThread());
 	DetourAttach(&(PVOID &)_HidD_GetProductString, getproductstring_fix_hook);
